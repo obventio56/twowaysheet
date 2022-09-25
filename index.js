@@ -1,74 +1,57 @@
-// Copyright 2018 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 "use strict";
 
-/* eslint-disable no-unused-vars */
-
-// This should be in a store somewhere, obviously
-const AIRTABLE_APIKEY = "keyTXBEYCNMOdQDOX";
-const AIRTABLE_ENDPOINT = "https://api.airtable.com";
-const AIRTABLE_BASE = "appaF7YfbaCllQaiZ";
-const AIRTABLE_TABLE = "tblnrdt60eb9wGdXB";
-
-// [START functions_helloworld_http]
-// [START functions_helloworld_get]
+const { v4: uuidv4 } = require("uuid");
 const { google } = require("googleapis");
 const { GoogleAuth } = require("google-auth-library");
-
 const functions = require("@google-cloud/functions-framework");
-// [END functions_helloworld_get]
-const escapeHtml = require("escape-html");
-// [END functions_helloworld_http]
+const { Datastore } = require("@google-cloud/datastore");
 const Airtable = require("airtable");
-Airtable.configure({
-  endpointUrl: AIRTABLE_ENDPOINT,
-  apiKey: AIRTABLE_APIKEY,
-});
+const axios = require("axios");
 
-const { Parser } = require("json2csv");
+const AIRTABLE_ENDPOINT = "https://api.airtable.com";
+const UPDATE_SHEET_URL = "";
+/**
+ * Helper to get sheetId from uri,
+ * which is sometimes all we have
+ */
+function sheetIdFromUri(URI) {
+  // ex. https://www.googleapis.com/drive/v3/files/1ghUWZXWVS8Fbga-5wNut2JblcANfghhfIxHOeppab0A?acknowledgeAbuse=false&supportsAllDrives=false&supportsTeamDrives=false&alt=json
+  return URI.split("files/")[1].split("?")[0];
+}
 
-// [START functions_helloworld_get]
+/**
+ * NoSQl records look roughly like follows:
+ *
+ * {
+ *    sheetId: "string",
+ *    airtableAPIKey: "string",
+ *    airtableBaseId: "string",
+ *    airtableTableId: "string"
+ * }
+ */
 
-// Register an HTTP function with the Functions Framework that will be executed
-// when you make an HTTP request to the deployed function's endpoint.
-functions.http("helloGET", (req, res) => {
-  res.send("Hello World!");
-});
-// [END functions_helloworld_get]
+/**
+ * Gets contents of Airtable base with given ids
+ * as row-major 2D array
+ */
+async function getAirtableContents(apiKey, baseId, tableId) {
+  Airtable.configure({
+    endpointUrl: AIRTABLE_ENDPOINT,
+    apiKey: apiKey,
+  });
 
-// Fetch data from Airtable API and format as csv in string
-async function fetchAirTableBase() {
   // Fetch all records from airtable base/table
-  const base = Airtable.base(AIRTABLE_BASE);
+  const base = Airtable.base(baseId);
   const airtableRecords = await new Promise((resolve, reject) => {
     var records = [];
-    base(AIRTABLE_TABLE)
+    base(tableId)
       .select({
-        // Selecting the first 3 records in Grid view:
         maxRecords: 1000,
         view: "Grid view",
       })
       .eachPage(
         function page(pageRecords, fetchNextPage) {
-          // This function (`page`) will get called for each page of records.
-
           records = [...records, ...pageRecords];
-
-          // To fetch the next page of records, call `fetchNextPage`.
-          // If there are more records, `page` will get called again.
-          // If there are no more records, `done` will get called.
           fetchNextPage();
         },
         function done(err) {
@@ -83,145 +66,209 @@ async function fetchAirTableBase() {
   // Remove extra Airtable metadata
   const cleanRecords = airtableRecords.map((r) => ({ id: r.id, ...r.fields }));
 
-  // Convert to CSV and return
-  const parser = new Parser();
-  return parser.parse(cleanRecords);
+  // Return as row-major 2D array
+  return [
+    Object.keys(cleanRecords[0]),
+    ...cleanRecords.map((r) => Object.values(r)),
+  ];
 }
 
-// Return data from Airtable as stream
-functions.http("getCSV", async (req, res) => {
-  res.type("text/plain");
-  res.send(await fetchAirTableBase());
-});
+/**
+ * Overwrites Airtable base with given id
+ * to values in content (row-major 2D array)
+ */
+async function setAirtableContents(apiKey, baseId, tableId, content) {
+  Airtable.configure({
+    endpointUrl: AIRTABLE_ENDPOINT,
+    apiKey: apiKey,
+  });
+  const base = Airtable.base(baseId);
 
-// Update airtable from sheet
-functions.http("updateAirtable", async (req, res) => {
+  // Rearrange from 2d array to json collection
+  const [keys, ...values] = content;
+  const collection = values.map((v) =>
+    v.map(p, (index) => ({ [keys[index]]: p }))
+  );
+
+  // Replace all present values in Airtable
+  await Promise.all(
+    collection.map((c) => {
+      base(tableId).replace([{ id: c.id, fields: { ...c, id: undefined } }]);
+    })
+  );
+}
+
+/**
+ * Gets contents of google sheet with given id
+ */
+async function getSheetContents(sheetId) {
+  // Auth sheets API
   const auth = new GoogleAuth({
-    scopes: "https://www.googleapis.com/auth/spreadsheets",
+    scopes: ["https://www.googleapis.com/auth/drive"],
   });
   const sheets = google.sheets({ version: "v4", auth });
-  const data = await sheets.spreadsheets.values.get({
-    spreadsheetId: "1ghUWZXWVS8Fbga-5wNut2JblcANfghhfIxHOeppab0A",
+
+  // query sheet
+  const { values } = await sheets.spreadsheets.values.get({
+    range: "Sheet1",
+    spreadsheetId: sheetId,
+    majorDimension: "ROWS",
+    valueRenderOption: "UNFORMATTED_VALUE",
+  });
+  return values;
+}
+
+/**
+ * Overwrites google sheet with given id
+ * to values in content (row-major 2D array)
+ */
+async function setSheetContents(sheetId, content) {
+  // Auth sheets API
+  const auth = new GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // Clear sheet
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: sheetId,
     range: "Sheet1",
   });
 
+  // Update sheet
+  await sheets.spreadsheets.values.update({
+    range: "Sheet1",
+    spreadsheetId: sheetId,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      majorDimension: "ROWS",
+      range: "Sheet1",
+      values: content,
+    },
+  });
+}
+
+/**
+ * Connects a google sheet to Airtable base.
+ * Initiates change watching on sheet for updates
+ * and registers sheet to receive updates from other
+ * sheets.
+ */
+functions.http("connectSheet", async (req, res) => {
+  const { airtableAPIKey, airtableTableId, airtableBaseId, sheetId } = req.body;
+
+  // Create connection record
+  const datastore = new Datastore({ namespace: "main" });
+  await datastore.save({
+    key: datastore.key(["connectedSheets"]),
+    data: {
+      airtableAPIKey,
+      airtableTableId,
+      airtableBaseId,
+      sheetId,
+    },
+  });
+
+  // Set contents in sheet
+  const airtableContents = await getAirtableContents(
+    airtableAPIKey,
+    airtableBaseId,
+    airtableTableId
+  );
+  await setSheetContents(sheetId, airtableContents);
+
+  // Start watching sheet for changes
+  const auth = new GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  const drive = google.drive({ version: "v3", auth });
+  await drive.files.watch({
+    fileId: sheetId,
+    requestBody: {
+      kind: "api#channel",
+      id: uuidv4(),
+      expiration: Date.now() + 86000000, // Keep open for ~1 day
+      type: "webhook",
+      address: "https://receive-notification-gz74lveyrq-uc.a.run.app",
+    },
+  });
+
   res.type("text/plain");
-  res.send(data);
+  res.send("success");
 });
 
 /**
- * gcloud functions deploy set-airtable \
---gen2 \
---runtime=nodejs16 \
---region=us-central1 \
---source=. \
---entry-point=updateAirtable \
---trigger-http \
---allow-unauthenticated
---service-account twowaysheet-363518@appspot.gserviceaccount.com
+ * Endpoint to receive update notifications from Google.
+ * If there is a valid update, updates connected Airtable
+ * and triggers update for all connected sheets
  */
+// https://receive-notification-gz74lveyrq-uc.a.run.app
+functions.http("receiveNotification", async (req, res) => {
+  // Check who made most recent edit
+  const auth = new GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  const drive = google.drive({ version: "v3", auth });
+  const revisions = await drive.revisions.list({
+    fileId: SHEET_ID,
+    fields: "*",
+    pageSize: 1,
+  });
 
-// [START functions_helloworld_http]
+  // Do nothing if this is our bot editing to avoid feedback loop
+  if (revisions.data.revisions[0].lastModifyingUser.me) {
+    return;
+  }
 
-/**
- * Responds to an HTTP request using data from the request body parsed according
- * to the "content-type" header.
- *
- * @param {Object} req Cloud Function request context.
- * @param {Object} res Cloud Function response context.
- */
-functions.http("helloHttp", (req, res) => {
-  res.send(`Hello ${escapeHtml(req.query.name || req.body.name || "World")}!`);
+  // Get sheet record from datastore
+  const sheetId = sheetIdFromUri(req.headers["x-goog-resource-uri"]);
+  const datastore = new Datastore({ namespace: "main" });
+  const sheetRecordQuery = datastore
+    .createQuery("connectedSheets")
+    .filter("sheetId", "=", sheetId);
+  const [[sheetRecord]] = await datastore.runQuery(sheetRecordQuery);
+
+  // Update airtable from Google sheet
+  const sheetContent = await getSheetContents(sheetId);
+  await setAirtableContents(
+    sheetRecord.airtableAPIKey,
+    sheetRecord.airtableBaseId,
+    sheetRecord.airtableTableId,
+    sheetContent
+  );
+
+  // Get all sheets connected to same query
+  const allConnectedSheetsQuery = datastore
+    .createQuery("connectedSheets")
+    .filter("airtableTableId", "=", sheetRecord.airtableTableId);
+  const [allConnectedSheets] = await datastore.runQuery(
+    allConnectedSheetsQuery
+  );
+
+  // Trigger update requests to all other sheets
+  await Promise.all(
+    allConnectedSheets.map((cs) =>
+      axios.post(UPDATE_SHEET_URL, { ...cs.sheetId })
+    )
+  );
+
+  res.type("text/plain");
+  res.send("success");
 });
-// [END functions_helloworld_http]
-
-// [START functions_helloworld_pubsub]
-/**
- * Background Cloud Function to be triggered by Pub/Sub.
- * This function is exported by index.js, and executed when
- * the trigger topic receives a message.
- *
- * @param {object} message The Pub/Sub message.
- * @param {object} context The event metadata.
- */
-exports.helloPubSub = (message, context) => {
-  const name = message.data
-    ? Buffer.from(message.data, "base64").toString()
-    : "World";
-
-  console.log(`Hello, ${name}!`);
-};
-// [END functions_helloworld_pubsub]
-
-// [START functions_helloworld_storage]
-/**
- * Generic background Cloud Function to be triggered by Cloud Storage.
- * This sample works for all Cloud Storage CRUD operations.
- *
- * @param {object} file The Cloud Storage file metadata.
- * @param {object} context The event metadata.
- */
-exports.helloGCS = (file, context) => {
-  console.log(`  Event: ${context.eventId}`);
-  console.log(`  Event Type: ${context.eventType}`);
-  console.log(`  Bucket: ${file.bucket}`);
-  console.log(`  File: ${file.name}`);
-  console.log(`  Metageneration: ${file.metageneration}`);
-  console.log(`  Created: ${file.timeCreated}`);
-  console.log(`  Updated: ${file.updated}`);
-};
-// [END functions_helloworld_storage]
 
 /**
- * Background Cloud Function that throws an error.
- *
- * @param {object} event The Cloud Functions event.
- * @param {object} context The event metadata.
- * @param {function} callback The callback function.
+ * Updates all connected sheets with current results in
+ * Airtable.
  */
+functions.http("updateSheet", async (req, res) => {
+  const { airtableBaseId, airtableAPIKey, sheetId, airtableTableId } = req.body;
 
-exports.helloError = (event, context, callback) => {
-  // [START functions_helloworld_error]
-  // These WILL be reported to Error Reporting
-  throw new Error("I failed you"); // Will cause a cold start if not caught
+  const airtableContents = await getAirtableContents(
+    airtableAPIKey,
+    airtableBaseId,
+    airtableTableId
+  );
+  await setSheetContents(sheetId, airtableContents);
 
-  // [END functions_helloworld_error]
-};
-
-/**
- * Background Cloud Function that throws a value.
- *
- * @param {object} event The Cloud Functions event.
- * @param {object} context The event metadata.
- * @param {function} callback The callback function.
- */
-exports.helloError2 = (event, context, callback) => {
-  // [START functions_helloworld_error]
-  // These WILL be reported to Error Reporting
-  console.error(new Error("I failed you")); // Logging an Error object
-  console.error("I failed you"); // Logging something other than an Error object
-  throw 1; // Throwing something other than an Error object
-  // [END functions_helloworld_error]
-};
-
-/**
- * Background Cloud Function that returns an error.
- *
- * @param {object} event The Cloud Functions event.
- * @param {object} context The event metadata.
- * @param {function} callback The callback function.
- */
-exports.helloError3 = (event, context, callback) => {
-  // This will NOT be reported to Error Reporting
-  // [START functions_helloworld_error]
-  callback("I failed you");
-  // [END functions_helloworld_error]
-};
-
-// HTTP Cloud Function that returns an error.
-functions.http("helloError4", (req, res) => {
-  // This will NOT be reported to Error Reporting
-  // [START functions_helloworld_error]
-  res.status(500).send("I failed you");
-  // [END functions_helloworld_error]
+  res.send("success");
 });
