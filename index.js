@@ -12,25 +12,114 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-'use strict';
+"use strict";
 
 /* eslint-disable no-unused-vars */
 
+// This should be in a store somewhere, obviously
+const AIRTABLE_APIKEY = "keyTXBEYCNMOdQDOX";
+const AIRTABLE_ENDPOINT = "https://api.airtable.com";
+const AIRTABLE_BASE = "appaF7YfbaCllQaiZ";
+const AIRTABLE_TABLE = "tblnrdt60eb9wGdXB";
+
 // [START functions_helloworld_http]
 // [START functions_helloworld_get]
-const functions = require('@google-cloud/functions-framework');
+const { google } = require("googleapis");
+const { GoogleAuth } = require("google-auth-library");
+
+const functions = require("@google-cloud/functions-framework");
 // [END functions_helloworld_get]
-const escapeHtml = require('escape-html');
+const escapeHtml = require("escape-html");
 // [END functions_helloworld_http]
+const Airtable = require("airtable");
+Airtable.configure({
+  endpointUrl: AIRTABLE_ENDPOINT,
+  apiKey: AIRTABLE_APIKEY,
+});
+
+const { Parser } = require("json2csv");
 
 // [START functions_helloworld_get]
 
 // Register an HTTP function with the Functions Framework that will be executed
 // when you make an HTTP request to the deployed function's endpoint.
-functions.http('helloGET', (req, res) => {
-  res.send('Hello World!');
+functions.http("helloGET", (req, res) => {
+  res.send("Hello World!");
 });
 // [END functions_helloworld_get]
+
+// Fetch data from Airtable API and format as csv in string
+async function fetchAirTableBase() {
+  // Fetch all records from airtable base/table
+  const base = Airtable.base(AIRTABLE_BASE);
+  const airtableRecords = await new Promise((resolve, reject) => {
+    var records = [];
+    base(AIRTABLE_TABLE)
+      .select({
+        // Selecting the first 3 records in Grid view:
+        maxRecords: 1000,
+        view: "Grid view",
+      })
+      .eachPage(
+        function page(pageRecords, fetchNextPage) {
+          // This function (`page`) will get called for each page of records.
+
+          records = [...records, ...pageRecords];
+
+          // To fetch the next page of records, call `fetchNextPage`.
+          // If there are more records, `page` will get called again.
+          // If there are no more records, `done` will get called.
+          fetchNextPage();
+        },
+        function done(err) {
+          if (err) {
+            reject(err);
+          }
+          resolve(records);
+        }
+      );
+  });
+
+  // Remove extra Airtable metadata
+  const cleanRecords = airtableRecords.map((r) => ({ id: r.id, ...r.fields }));
+
+  // Convert to CSV and return
+  const parser = new Parser();
+  return parser.parse(cleanRecords);
+}
+
+// Return data from Airtable as stream
+functions.http("getCSV", async (req, res) => {
+  res.type("text/plain");
+  res.send(await fetchAirTableBase());
+});
+
+// Update airtable from sheet
+functions.http("updateAirtable", async (req, res) => {
+  const auth = new GoogleAuth({
+    scopes: "https://www.googleapis.com/auth/spreadsheets",
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+  const data = await sheets.spreadsheets.values.get({
+    spreadsheetId: "1ghUWZXWVS8Fbga-5wNut2JblcANfghhfIxHOeppab0A",
+    range: "Sheet1",
+  });
+
+  res.type("text/plain");
+  res.send(data);
+});
+
+/**
+ * gcloud functions deploy set-airtable \
+--gen2 \
+--runtime=nodejs16 \
+--region=us-central1 \
+--source=. \
+--entry-point=updateAirtable \
+--trigger-http \
+--allow-unauthenticated
+--service-account twowaysheet-363518@appspot.gserviceaccount.com
+ */
 
 // [START functions_helloworld_http]
 
@@ -41,8 +130,8 @@ functions.http('helloGET', (req, res) => {
  * @param {Object} req Cloud Function request context.
  * @param {Object} res Cloud Function response context.
  */
-functions.http('helloHttp', (req, res) => {
-  res.send(`Hello ${escapeHtml(req.query.name || req.body.name || 'World')}!`);
+functions.http("helloHttp", (req, res) => {
+  res.send(`Hello ${escapeHtml(req.query.name || req.body.name || "World")}!`);
 });
 // [END functions_helloworld_http]
 
@@ -57,8 +146,8 @@ functions.http('helloHttp', (req, res) => {
  */
 exports.helloPubSub = (message, context) => {
   const name = message.data
-    ? Buffer.from(message.data, 'base64').toString()
-    : 'World';
+    ? Buffer.from(message.data, "base64").toString()
+    : "World";
 
   console.log(`Hello, ${name}!`);
 };
@@ -94,7 +183,7 @@ exports.helloGCS = (file, context) => {
 exports.helloError = (event, context, callback) => {
   // [START functions_helloworld_error]
   // These WILL be reported to Error Reporting
-  throw new Error('I failed you'); // Will cause a cold start if not caught
+  throw new Error("I failed you"); // Will cause a cold start if not caught
 
   // [END functions_helloworld_error]
 };
@@ -109,8 +198,8 @@ exports.helloError = (event, context, callback) => {
 exports.helloError2 = (event, context, callback) => {
   // [START functions_helloworld_error]
   // These WILL be reported to Error Reporting
-  console.error(new Error('I failed you')); // Logging an Error object
-  console.error('I failed you'); // Logging something other than an Error object
+  console.error(new Error("I failed you")); // Logging an Error object
+  console.error("I failed you"); // Logging something other than an Error object
   throw 1; // Throwing something other than an Error object
   // [END functions_helloworld_error]
 };
@@ -125,14 +214,14 @@ exports.helloError2 = (event, context, callback) => {
 exports.helloError3 = (event, context, callback) => {
   // This will NOT be reported to Error Reporting
   // [START functions_helloworld_error]
-  callback('I failed you');
+  callback("I failed you");
   // [END functions_helloworld_error]
 };
 
 // HTTP Cloud Function that returns an error.
-functions.http('helloError4', (req, res) => {
+functions.http("helloError4", (req, res) => {
   // This will NOT be reported to Error Reporting
   // [START functions_helloworld_error]
-  res.status(500).send('I failed you');
+  res.status(500).send("I failed you");
   // [END functions_helloworld_error]
 });

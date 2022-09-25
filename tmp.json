@@ -1,0 +1,74 @@
+[
+  {
+    "_table": {
+      "_base": { "_airtable": {}, "_id": "appaF7YfbaCllQaiZ" },
+      "id": null,
+      "name": "tblnrdt60eb9wGdXB"
+    },
+    "id": "recEK7NA6c2LvViMU",
+    "_rawJson": {
+      "id": "recEK7NA6c2LvViMU",
+      "createdTime": "2022-09-24T16:19:11.000Z",
+      "fields": {
+        "Name": "Property A",
+        "Price": 300000,
+        "Address": "64 Linnaean St, Cambridge, MA",
+        "Status": "Bidding"
+      }
+    },
+    "fields": {
+      "Name": "Property A",
+      "Price": 300000,
+      "Address": "64 Linnaean St, Cambridge, MA",
+      "Status": "Bidding"
+    }
+  },
+  {
+    "_table": {
+      "_base": { "_airtable": {}, "_id": "appaF7YfbaCllQaiZ" },
+      "id": null,
+      "name": "tblnrdt60eb9wGdXB"
+    },
+    "id": "recpMPpEOyndjshFl",
+    "_rawJson": {
+      "id": "recpMPpEOyndjshFl",
+      "createdTime": "2022-09-24T16:19:11.000Z",
+      "fields": {
+        "Name": "Property B",
+        "Price": 50000,
+        "Address": "9 Todd Rd. Carlisle, PA ",
+        "Status": "Inspection"
+      }
+    },
+    "fields": {
+      "Name": "Property B",
+      "Price": 50000,
+      "Address": "9 Todd Rd. Carlisle, PA ",
+      "Status": "Inspection"
+    }
+  },
+  {
+    "_table": {
+      "_base": { "_airtable": {}, "_id": "appaF7YfbaCllQaiZ" },
+      "id": null,
+      "name": "tblnrdt60eb9wGdXB"
+    },
+    "id": "rec7Ybg31KW0LPZpX",
+    "_rawJson": {
+      "id": "rec7Ybg31KW0LPZpX",
+      "createdTime": "2022-09-24T16:19:11.000Z",
+      "fields": {
+        "Name": "Property C",
+        "Price": 100000000,
+        "Address": "1 World Trade Center",
+        "Status": "Offered"
+      }
+    },
+    "fields": {
+      "Name": "Property C",
+      "Price": 100000000,
+      "Address": "1 World Trade Center",
+      "Status": "Offered"
+    }
+  }
+]

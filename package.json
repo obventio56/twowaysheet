@@ -1,8 +1,9 @@
 {
-  "name": "read-csv",
+  "name": "nodejs-docs-samples-functions-hello-world",
   "version": "0.0.1",
   "private": true,
-  "author": "Alex Pedersen",
+  "license": "Apache-2.0",
+  "author": "Google Inc.",
   "repository": {
     "type": "git",
     "url": "https://github.com/GoogleCloudPlatform/nodejs-docs-samples.git"
@@ -14,12 +15,18 @@
     "unit-test": "mocha test/index.test.js test/*unit*test.js test/*integration*test.js --timeout=6000 --exit",
     "system-test": "mocha test/*system*test.js --timeout=600000 --exit",
     "all-test": "npm run unit-test && npm run system-test",
-    "test": "npm -- run unit-test"
+    "test": "npm -- run unit-test",
+    "test-start": "npx functions-framework --target=updateAirtable [--signature-type=HTTP]"
   },
   "dependencies": {
     "@google-cloud/debug-agent": "^7.0.0",
     "@google-cloud/functions-framework": "^3.1.0",
-    "escape-html": "^1.0.3"
+    "@google-cloud/local-auth": "^2.1.0",
+    "airtable": "^0.11.5",
+    "escape-html": "^1.0.3",
+    "google-auth-library": "^8.5.2",
+    "googleapis": "^105.0.0",
+    "json2csv": "^5.0.7"
   },
   "devDependencies": {
     "@google-cloud/pubsub": "^3.0.0",
