@@ -7,6 +7,7 @@ const functions = require("@google-cloud/functions-framework");
 const { Datastore } = require("@google-cloud/datastore");
 const Airtable = require("airtable");
 const axios = require("axios");
+var _ = require("lodash");
 
 const AIRTABLE_ENDPOINT = "https://api.airtable.com";
 const UPDATE_SHEET_URL = "https://update-sheet-gz74lveyrq-uc.a.run.app";
@@ -93,12 +94,22 @@ async function setAirtableContents(apiKey, baseId, tableId, content) {
     }, {});
   });
 
-  // Replace all present values in Airtable
-  await Promise.all(
-    collection.map((c) => {
-      base(tableId).update([{ id: c.id, fields: { ...c, id: undefined } }]);
-    })
-  );
+  await Promise.all([
+    // Update existing records
+    ..._.chunk(
+      collection
+        .filter((c) => c.id)
+        .map((c) => ({ id: c.id, fields: { ...c, id: undefined } })),
+      10
+    ).map((ch) => base(tableId).update(ch)),
+    // Create new records
+    ..._.chunk(
+      collection
+        .filter((c) => !c.id)
+        .map((c) => ({ fields: { ...c, id: undefined } })),
+      10
+    ).map((ch) => base(tableId).create(ch)),
+  ]);
 }
 
 /**
@@ -206,7 +217,6 @@ functions.http("connectSheet", async (req, res) => {
  * If there is a valid update, updates connected Airtable
  * and triggers update for all connected sheets
  */
-// https://receive-notification-gz74lveyrq-uc.a.run.app
 functions.http("receiveNotification", async (req, res) => {
   const sheetId = sheetIdFromUri(req.headers["x-goog-resource-uri"]);
   console.log(sheetId);
@@ -219,12 +229,16 @@ functions.http("receiveNotification", async (req, res) => {
   const revisions = await drive.revisions.list({
     fileId: sheetId,
     fields: "*",
-    pageSize: 1,
+    pageSize: 1000,
   });
 
   // Do nothing if this is our bot editing to avoid feedback loop
-  if (revisions.data.revisions[0].lastModifyingUser.me) {
+  if (
+    revisions.data.revisions[revisions.data.revisions.length - 1]
+      .lastModifyingUser.me
+  ) {
     console.log("Received bot updated");
+    res.send("success");
     return;
   }
 
@@ -253,7 +267,7 @@ functions.http("receiveNotification", async (req, res) => {
     allConnectedSheetsQuery
   );
 
-  // Trigger update requests to all other sheets
+  // Trigger update requests to all sheets
   await Promise.all(
     allConnectedSheets.map((cs) =>
       axios.post(UPDATE_SHEET_URL, { ...cs, key: undefined })

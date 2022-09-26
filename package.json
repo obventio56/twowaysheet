@@ -28,7 +28,8 @@
     "escape-html": "^1.0.3",
     "google-auth-library": "^8.5.2",
     "googleapis": "^105.0.0",
-    "json2csv": "^5.0.7"
+    "json2csv": "^5.0.7",
+    "lodash": "^4.17.21"
   },
   "devDependencies": {
     "@google-cloud/pubsub": "^3.0.0",
