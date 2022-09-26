@@ -16,7 +16,7 @@
     "system-test": "mocha test/*system*test.js --timeout=600000 --exit",
     "all-test": "npm run unit-test && npm run system-test",
     "test": "npm -- run unit-test",
-    "test-start": "npx functions-framework --target=fiddle [--signature-type=HTTP]"
+    "test-start": "npx functions-framework --target=receiveNotification [--signature-type=HTTP]"
   },
   "dependencies": {
     "@google-cloud/datastore": "^7.0.0",

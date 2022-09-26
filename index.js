@@ -9,7 +9,10 @@ const Airtable = require("airtable");
 const axios = require("axios");
 
 const AIRTABLE_ENDPOINT = "https://api.airtable.com";
-const UPDATE_SHEET_URL = "";
+const UPDATE_SHEET_URL = "https://update-sheet-gz74lveyrq-uc.a.run.app";
+const RECEIVE_NOTIFICATION_URL =
+  "https://receive-notification-gz74lveyrq-uc.a.run.app";
+
 /**
  * Helper to get sheetId from uri,
  * which is sometimes all we have
@@ -65,12 +68,9 @@ async function getAirtableContents(apiKey, baseId, tableId) {
 
   // Remove extra Airtable metadata
   const cleanRecords = airtableRecords.map((r) => ({ id: r.id, ...r.fields }));
-
+  const keys = Object.keys(cleanRecords[0]);
   // Return as row-major 2D array
-  return [
-    Object.keys(cleanRecords[0]),
-    ...cleanRecords.map((r) => Object.values(r)),
-  ];
+  return [keys, ...cleanRecords.map((r) => keys.map((k) => r[k]))];
 }
 
 /**
@@ -86,14 +86,17 @@ async function setAirtableContents(apiKey, baseId, tableId, content) {
 
   // Rearrange from 2d array to json collection
   const [keys, ...values] = content;
-  const collection = values.map((v) =>
-    v.map(p, (index) => ({ [keys[index]]: p }))
-  );
+
+  const collection = values.map((v) => {
+    return v.reduce((cul, p, index) => {
+      return { ...cul, [keys[index]]: p };
+    }, {});
+  });
 
   // Replace all present values in Airtable
   await Promise.all(
     collection.map((c) => {
-      base(tableId).replace([{ id: c.id, fields: { ...c, id: undefined } }]);
+      base(tableId).update([{ id: c.id, fields: { ...c, id: undefined } }]);
     })
   );
 }
@@ -109,13 +112,14 @@ async function getSheetContents(sheetId) {
   const sheets = google.sheets({ version: "v4", auth });
 
   // query sheet
-  const { values } = await sheets.spreadsheets.values.get({
+  const response = await sheets.spreadsheets.values.get({
     range: "Sheet1",
     spreadsheetId: sheetId,
     majorDimension: "ROWS",
     valueRenderOption: "UNFORMATTED_VALUE",
   });
-  return values;
+
+  return response.data.values;
 }
 
 /**
@@ -189,7 +193,7 @@ functions.http("connectSheet", async (req, res) => {
       id: uuidv4(),
       expiration: Date.now() + 86000000, // Keep open for ~1 day
       type: "webhook",
-      address: "https://receive-notification-gz74lveyrq-uc.a.run.app",
+      address: RECEIVE_NOTIFICATION_URL,
     },
   });
 
@@ -204,24 +208,27 @@ functions.http("connectSheet", async (req, res) => {
  */
 // https://receive-notification-gz74lveyrq-uc.a.run.app
 functions.http("receiveNotification", async (req, res) => {
+  const sheetId = sheetIdFromUri(req.headers["x-goog-resource-uri"]);
+  console.log(sheetId);
+
   // Check who made most recent edit
   const auth = new GoogleAuth({
     scopes: ["https://www.googleapis.com/auth/drive"],
   });
   const drive = google.drive({ version: "v3", auth });
   const revisions = await drive.revisions.list({
-    fileId: SHEET_ID,
+    fileId: sheetId,
     fields: "*",
     pageSize: 1,
   });
 
   // Do nothing if this is our bot editing to avoid feedback loop
   if (revisions.data.revisions[0].lastModifyingUser.me) {
+    console.log("Received bot updated");
     return;
   }
 
   // Get sheet record from datastore
-  const sheetId = sheetIdFromUri(req.headers["x-goog-resource-uri"]);
   const datastore = new Datastore({ namespace: "main" });
   const sheetRecordQuery = datastore
     .createQuery("connectedSheets")
@@ -230,6 +237,7 @@ functions.http("receiveNotification", async (req, res) => {
 
   // Update airtable from Google sheet
   const sheetContent = await getSheetContents(sheetId);
+
   await setAirtableContents(
     sheetRecord.airtableAPIKey,
     sheetRecord.airtableBaseId,
@@ -248,7 +256,7 @@ functions.http("receiveNotification", async (req, res) => {
   // Trigger update requests to all other sheets
   await Promise.all(
     allConnectedSheets.map((cs) =>
-      axios.post(UPDATE_SHEET_URL, { ...cs.sheetId })
+      axios.post(UPDATE_SHEET_URL, { ...cs, key: undefined })
     )
   );
 
